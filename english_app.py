@@ -6,10 +6,11 @@ import os
 import copy
 import json
 import gspread
+import base64  # <--- Mới thêm thư viện này để xử lý âm thanh
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CẤU HÌNH ---
-st.set_page_config(page_title="English Pro (Auto Sync)", page_icon="☁️", layout="wide")
+st.set_page_config(page_title="English Pro (Final)", page_icon="☁️", layout="wide")
 
 # --- CSS ---
 st.markdown("""
@@ -19,18 +20,32 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- KẾT NỐI GOOGLE SHEETS (Đã sửa để đọc từ connections.gsheets) ---
+# --- 1. KHU VỰC CÁC HÀM HỖ TRỢ (HELPER FUNCTIONS) ---
+# (Đây là khu vực bạn hỏi - Nơi chứa các công cụ xử lý)
+
+def autoplay_audio(audio_fp):
+    """Hàm phát âm thanh HTML5 mạnh mẽ cho Mobile/iPhone"""
+    try:
+        # Chuyển đổi file âm thanh sang dạng mã Base64
+        b64 = base64.b64encode(audio_fp.getvalue()).decode()
+        # Tạo mã HTML nhúng trực tiếp
+        md = f"""
+            <audio controls autoplay style="width: 100%; margin-top: 10px;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            </audio>
+            """
+        st.markdown(md, unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Lỗi phát âm thanh: {e}")
+
 @st.cache_resource
 def connect_gsheet():
     try:
-        # Cập nhật: Đọc từ mục [connections.gsheets]
         if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
             creds_dict = dict(st.secrets["connections"]["gsheets"])
         else:
-            # Fallback cho trường hợp cũ
             creds_dict = dict(st.secrets["gcp_service_account"])
 
-        # Xử lý lỗi dòng mới trong Private Key (quan trọng)
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
@@ -39,13 +54,10 @@ def connect_gsheet():
         client = gspread.authorize(creds)
         return client
     except Exception as e:
-        # st.error(f"Lỗi kết nối: {e}") 
         return None
 
 def get_sheet_url():
-    """Lấy URL từ secrets (ưu tiên spreadsheet hoặc sheet_url)"""
     url = ""
-    # Kiểm tra trong connections.gsheets
     if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
         secrets_gsheets = st.secrets["connections"]["gsheets"]
         if "spreadsheet" in secrets_gsheets:
@@ -53,10 +65,8 @@ def get_sheet_url():
         elif "sheet_url" in secrets_gsheets:
             url = secrets_gsheets["sheet_url"]
     
-    # Kiểm tra cấu hình cũ
     if not url and "sheet_url" in st.secrets:
         url = st.secrets["sheet_url"]
-        
     return url
 
 def save_to_gsheet(queue, mastered):
@@ -71,7 +81,6 @@ def save_to_gsheet(queue, mastered):
     try:
         sh = client.open_by_url(sheet_url)
         
-        # Lưu Queue
         try: ws_queue = sh.worksheet("Queue")
         except: ws_queue = sh.add_worksheet(title="Queue", rows=1000, cols=10)
         
@@ -83,7 +92,6 @@ def save_to_gsheet(queue, mastered):
         else:
             ws_queue.update(range_name='A1', values=[["Empty"]])
 
-        # Lưu Mastered
         try: ws_mastered = sh.worksheet("Mastered")
         except: ws_mastered = sh.add_worksheet(title="Mastered", rows=1000, cols=10)
         
@@ -133,7 +141,6 @@ def load_from_gsheet():
     except Exception as e:
         return None, None
 
-# --- HÀM TẢI TỪ VỰNG GỐC ---
 @st.cache_data
 def load_vocabulary(uploaded_file=None):
     df = None
@@ -173,7 +180,6 @@ def load_vocabulary(uploaded_file=None):
         vocab_data[level] = {"name": f"Level {level}", "words": words}
     return vocab_data
 
-# --- HÀM LOGIC ---
 def text_to_speech(text):
     try:
         tts = gTTS(text=text, lang='en')
@@ -200,11 +206,12 @@ def handle_review(word, status):
             st.toast(f"Đã nhớ: {current['english']}", icon="✅")
             
     st.session_state.show_meaning = False
+    st.session_state.show_image_state = False 
     
-    # TỰ ĐỘNG LƯU
     save_to_gsheet(st.session_state.learning_queue, st.session_state.mastered_words)
 
-# --- KHỞI TẠO DỮ LIỆU ---
+# --- 2. GIAO DIỆN VÀ LOGIC CHÍNH ---
+
 DEFAULT_DATA = {"Demo": {"name": "Demo", "words": [{"english": "Hello", "vietnamese": "Xin chào", "progress": 0}]}}
 
 with st.sidebar:
@@ -217,7 +224,7 @@ with st.sidebar:
     else:
         st.error("⚠️ Chưa tìm thấy cấu hình Google Sheet")
 
-# 1. Load từ vựng gốc
+# 1. Load từ vựng
 VOCABULARY_DATA = load_vocabulary(uploaded_file)
 if not VOCABULARY_DATA: VOCABULARY_DATA = DEFAULT_DATA
 
@@ -225,8 +232,8 @@ if not VOCABULARY_DATA: VOCABULARY_DATA = DEFAULT_DATA
 if 'initialized' not in st.session_state:
     st.session_state.initialized = True
     st.session_state.show_meaning = False
+    st.session_state.show_image_state = False 
     
-    # Load từ Cloud
     with st.spinner("Đang đồng bộ dữ liệu từ Cloud..."):
         cloud_queue, cloud_mastered = load_from_gsheet()
     
@@ -234,7 +241,6 @@ if 'initialized' not in st.session_state:
         st.session_state.learning_queue = cloud_queue
         st.session_state.mastered_words = cloud_mastered
         
-        # Đoán topic
         found_topic = list(VOCABULARY_DATA.keys())[0]
         if cloud_queue:
             first_word = cloud_queue[0]['english']
@@ -275,6 +281,7 @@ if new_topic != st.session_state.previous_topic:
     st.session_state.learning_queue = copy.deepcopy(VOCABULARY_DATA[new_topic]['words'])
     st.session_state.mastered_words = []
     st.session_state.show_meaning = False
+    st.session_state.show_image_state = False
     
     save_to_gsheet(st.session_state.learning_queue, st.session_state.mastered_words)
     st.rerun()
@@ -302,16 +309,32 @@ else:
         st.markdown(f"<h1 style='text-align: center; color: #0068C9'>{word['english']}</h1>", unsafe_allow_html=True)
         st.markdown(f"<p style='text-align: center; color: gray'>{word.get('pronunciation', '')}</p>", unsafe_allow_html=True)
         
-        col_audio, _ = st.columns([1,3])
+        c_audio, c_img, c_space = st.columns([1, 1, 2])
+        
+        # 1. Nút Loa
         if 'trigger_audio' not in st.session_state: st.session_state.trigger_audio = False
-        with col_audio:
+        with c_audio:
              if st.button("🔊 NGHE", use_container_width=True):
                  st.session_state.trigger_audio = True
         
+        # 2. Nút Hình ảnh
+        if 'show_image_state' not in st.session_state: st.session_state.show_image_state = False
+        with c_img:
+            if st.button("🖼️ HÌNH ẢNH", use_container_width=True):
+                st.session_state.show_image_state = not st.session_state.show_image_state
+
+        # Logic Audio (Dùng hàm autoplay_audio mới)
         if st.session_state.trigger_audio:
-            audio = text_to_speech(word['english'])
-            if audio: st.audio(audio, format='audio/mp3', autoplay=True)
-            st.session_state.trigger_audio = False
+            audio_fp = text_to_speech(word['english'])
+            if audio_fp:
+                autoplay_audio(audio_fp) # <--- ĐÃ SỬA Ở ĐÂY
+            # Không reset trigger_audio để thanh player không biến mất ngay
+
+        # Logic Hình ảnh
+        if st.session_state.show_image_state:
+            with st.spinner("Đang tải ảnh..."):
+                img_url = f"https://image.pollinations.ai/prompt/{word['english']} minimalist illustration"
+                st.image(img_url, caption=word['english'], use_container_width=True)
 
         st.divider()
         
