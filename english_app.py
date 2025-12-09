@@ -6,7 +6,7 @@ import os
 import copy
 import json
 import gspread
-import base64  # <--- Mới thêm thư viện này để xử lý âm thanh
+import base64
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CẤU HÌNH ---
@@ -16,19 +16,26 @@ st.set_page_config(page_title="English Pro (Final)", page_icon="☁️", layout=
 st.markdown("""
 <style>
     div.stButton > button { height: 60px; font-size: 20px; font-weight: bold; border-radius: 12px; }
+    /* CSS cho nút Link (st.link_button) để nó to bằng các nút khác */
+    a[data-testid="stLinkButton"] { 
+        height: 60px; 
+        font-size: 20px; 
+        font-weight: bold; 
+        border-radius: 12px; 
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
     .stToast { position: fixed; top: 50px; right: 10px; width: 300px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. KHU VỰC CÁC HÀM HỖ TRỢ (HELPER FUNCTIONS) ---
-# (Đây là khu vực bạn hỏi - Nơi chứa các công cụ xử lý)
+# --- KHU VỰC CÁC HÀM HỖ TRỢ ---
 
 def autoplay_audio(audio_fp):
     """Hàm phát âm thanh HTML5 mạnh mẽ cho Mobile/iPhone"""
     try:
-        # Chuyển đổi file âm thanh sang dạng mã Base64
         b64 = base64.b64encode(audio_fp.getvalue()).decode()
-        # Tạo mã HTML nhúng trực tiếp
         md = f"""
             <audio controls autoplay style="width: 100%; margin-top: 10px;">
             <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
@@ -206,11 +213,11 @@ def handle_review(word, status):
             st.toast(f"Đã nhớ: {current['english']}", icon="✅")
             
     st.session_state.show_meaning = False
-    st.session_state.show_image_state = False 
+    # Không cần reset image state nữa vì chúng ta dùng link
     
     save_to_gsheet(st.session_state.learning_queue, st.session_state.mastered_words)
 
-# --- 2. GIAO DIỆN VÀ LOGIC CHÍNH ---
+# --- GIAO DIỆN VÀ LOGIC CHÍNH ---
 
 DEFAULT_DATA = {"Demo": {"name": "Demo", "words": [{"english": "Hello", "vietnamese": "Xin chào", "progress": 0}]}}
 
@@ -232,7 +239,6 @@ if not VOCABULARY_DATA: VOCABULARY_DATA = DEFAULT_DATA
 if 'initialized' not in st.session_state:
     st.session_state.initialized = True
     st.session_state.show_meaning = False
-    st.session_state.show_image_state = False 
     
     with st.spinner("Đang đồng bộ dữ liệu từ Cloud..."):
         cloud_queue, cloud_mastered = load_from_gsheet()
@@ -281,7 +287,6 @@ if new_topic != st.session_state.previous_topic:
     st.session_state.learning_queue = copy.deepcopy(VOCABULARY_DATA[new_topic]['words'])
     st.session_state.mastered_words = []
     st.session_state.show_meaning = False
-    st.session_state.show_image_state = False
     
     save_to_gsheet(st.session_state.learning_queue, st.session_state.mastered_words)
     st.rerun()
@@ -309,6 +314,7 @@ else:
         st.markdown(f"<h1 style='text-align: center; color: #0068C9'>{word['english']}</h1>", unsafe_allow_html=True)
         st.markdown(f"<p style='text-align: center; color: gray'>{word.get('pronunciation', '')}</p>", unsafe_allow_html=True)
         
+        # --- KHU VỰC NÚT: LOA VÀ LINK GOOGLE ---
         c_audio, c_img, c_space = st.columns([1, 1, 2])
         
         # 1. Nút Loa
@@ -317,24 +323,18 @@ else:
              if st.button("🔊 NGHE", use_container_width=True):
                  st.session_state.trigger_audio = True
         
-        # 2. Nút Hình ảnh
-        if 'show_image_state' not in st.session_state: st.session_state.show_image_state = False
+        # 2. Nút Link Google Images (MỚI)
         with c_img:
-            if st.button("🖼️ HÌNH ẢNH", use_container_width=True):
-                st.session_state.show_image_state = not st.session_state.show_image_state
+            # Tạo link tìm kiếm Google Image
+            google_img_url = f"https://www.google.com.vn/search?q={word['english']}&tbm=isch"
+            # Nút Link đặc biệt
+            st.link_button("🔍 GOOGLE IMG", google_img_url, use_container_width=True)
 
-        # Logic Audio (Dùng hàm autoplay_audio mới)
+        # Logic Audio (Dùng hàm autoplay_audio cho mobile)
         if st.session_state.trigger_audio:
             audio_fp = text_to_speech(word['english'])
             if audio_fp:
-                autoplay_audio(audio_fp) # <--- ĐÃ SỬA Ở ĐÂY
-            # Không reset trigger_audio để thanh player không biến mất ngay
-
-        # Logic Hình ảnh
-        if st.session_state.show_image_state:
-            with st.spinner("Đang tải ảnh..."):
-                img_url = f"https://image.pollinations.ai/prompt/{word['english']} minimalist illustration"
-                st.image(img_url, caption=word['english'], use_container_width=True)
+                autoplay_audio(audio_fp)
 
         st.divider()
         
